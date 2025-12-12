@@ -12,6 +12,7 @@ from message_filters import Subscriber, ApproximateTimeSynchronizer
 from tf2_ros import Buffer, TransformListener, TransformException
 from ament_index_python.packages import get_package_share_directory
 
+map_path = 'src/prob_rob_labs_ros_2/prob_rob_labs/config/landmarks_map.json'
 
 def quat_to_yaw(q: Quaternion) -> float:
     x, y, z, w = q.x, q.y, q.z, q.w
@@ -39,6 +40,8 @@ class EkfSlamError(Node):
         # Robot pose error subscribers
         self.gt_sub = Subscriber(self, PoseStamped, '/tb3/ground_truth/pose')
         self.ekf_sub = Subscriber(self, Odometry, '/ekf_slam_pose')
+
+        self.map_path = map_path
 
         self.sync = ApproximateTimeSynchronizer(
             [self.gt_sub, self.ekf_sub],
@@ -87,18 +90,14 @@ class EkfSlamError(Node):
     def load_landmark_ground_truth(self):
         """Load ground truth landmark positions from landmarks_map.json"""
         landmark_gt = {}
-        try:
-            pkg_share = get_package_share_directory('prob_rob_labs')
-            config_path = os.path.join(pkg_share, 'config', 'landmarks_map.json')
-            with open(config_path, 'r') as f:
-                data = json.load(f)
-            for lm in data['landmarks']:
-                color = lm['color']
-                pos = lm['position']
-                landmark_gt[color] = (pos['x'], pos['y'])
-            self.get_logger().info(f'Loaded {len(landmark_gt)} ground truth landmarks from {config_path}')
-        except Exception as e:
-            self.get_logger().error(f'Failed to load landmarks_map.json: {e}')
+        with open(self.map_path, 'r') as f:
+            data = json.load(f)
+        for lm in data['landmarks']:
+            color = lm['color']
+            pos = lm['position']
+            landmark_gt[color] = (pos['x'], pos['y'])
+        self.get_logger().info(f'Loaded {len(landmark_gt)} ground truth landmarks from {self.map_path}')
+
         return landmark_gt
 
     def landmark_error_callback(self):
