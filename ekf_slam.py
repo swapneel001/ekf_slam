@@ -119,7 +119,7 @@ class EkfSlam(Node):
         )
 
         #publishers for robot pose - as ekf pose, and landmarks - as tf arrays
-        self.odom_pub = self.create_publisher(Odometry, "/ekf_pose", 10)
+        self.odom_pub = self.create_publisher(Odometry, "/ekf_slam_pose", 10)
         self.landmark_pub = TransformBroadcaster(self)
 
 
