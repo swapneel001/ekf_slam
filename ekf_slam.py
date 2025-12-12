@@ -15,6 +15,7 @@ from tf_transformations import quaternion_from_euler, euler_from_quaternion
 from tf2_ros import Buffer, TransformListener, TransformException,TransformStamped
 from tf2_ros.transform_broadcaster import TransformBroadcaster
 
+from visualization_msgs.msg import Marker,MarkerArray
 heartbeat_period = 0.1
 
 
@@ -120,6 +121,7 @@ class EkfSlam(Node):
         #publishers for robot pose - as ekf pose, and landmarks - as tf arrays
         self.odom_pub = self.create_publisher(Odometry, "/ekf_slam_pose", 10)
         self.landmark_pub = TransformBroadcaster(self)
+        self.landmark_cov_pub = self.create_publisher(MarkerArray, "/ekf_slam_landmark_covariances", 10)
 
 
     #CALLBACKS BELOW
@@ -221,6 +223,7 @@ class EkfSlam(Node):
             self.measurement_update(landmark_id, d_m, theta_m, var_d, var_theta)
             self.publish_ekf_pose(self.system_time)
             self.publish_landmarks(self.system_time)
+            self.publish_landmark_covariances(self.system_time)
             return
         
         if self.last_vel is not None:
@@ -231,6 +234,7 @@ class EkfSlam(Node):
         self.system_time = timestamp
         self.publish_ekf_pose(timestamp)
         self.publish_landmarks(timestamp)
+        self.publish_landmark_covariances(timestamp)
 
 
 
@@ -477,6 +481,74 @@ class EkfSlam(Node):
             t.transform.translation.z = 0.0
             t.transform.rotation = self.to_quaternion(0.0)
             self.landmark_pub.sendTransform(t)
+
+    def publish_landmark_covariances(self, timestamp):
+        """Publish landmark covariance ellipses as visualization markers."""
+        marker_array = MarkerArray()
+        
+        for landmark_id, info in self.landmark_registry.items():
+            index = info['index']
+            
+            # Landmark position
+            mx = self.state[index, 0]
+            my = self.state[index + 1, 0]
+            
+            # Extract 2x2 covariance block for this landmark
+            P_landmark = self.Cov[index:index+2, index:index+2]
+            
+            # Compute eigenvalues and eigenvectors for ellipse
+            eigenvalues, eigenvectors = np.linalg.eig(P_landmark)
+            
+            # Sort by largest eigenvalue
+            order = eigenvalues.argsort()[::-1]
+            eigenvalues = eigenvalues[order]
+            eigenvectors = eigenvectors[:, order]
+            
+            # Ellipse orientation (angle of major axis)
+            angle = math.atan2(eigenvectors[1, 0], eigenvectors[0, 0])
+            
+            # 95% confidence ellipse (chi-squared with 2 DOF, 95% = 5.991)
+            # Use 2-sigma for ~95% confidence
+            scale = 2.0
+            
+            marker = Marker()
+            marker.header.stamp = timestamp
+            marker.header.frame_id = "map"
+            marker.ns = "landmark_covariances"
+            marker.id = landmark_id
+            marker.type = Marker.CYLINDER
+            marker.action = Marker.ADD
+            
+            marker.pose.position.x = float(mx)
+            marker.pose.position.y = float(my)
+            marker.pose.position.z = 0.05  # Slightly above ground
+            
+            # Orientation from ellipse angle
+            q = self.to_quaternion(angle)
+            marker.pose.orientation = q
+            
+            # Scale: diameter = 2 * sqrt(eigenvalue) * scale_factor
+            marker.scale.x = float(2.0 * scale * math.sqrt(max(eigenvalues[0], 1e-6)))
+            marker.scale.y = float(2.0 * scale * math.sqrt(max(eigenvalues[1], 1e-6)))
+            marker.scale.z = 0.01  # Thin cylinder (flat ellipse)
+            
+            # Color based on landmark
+            colors = {
+                1: (1.0, 0.0, 0.0),  # red
+                2: (0.0, 1.0, 0.0),  # green
+                3: (1.0, 1.0, 0.0),  # yellow
+                4: (1.0, 0.0, 1.0),  # magenta
+                5: (0.0, 1.0, 1.0),  # cyan
+            }
+            r, g, b = colors.get(landmark_id, (1.0, 1.0, 1.0))
+            marker.color.r = r
+            marker.color.g = g
+            marker.color.b = b
+            marker.color.a = 0.5  # Semi-transparent
+            
+            marker_array.markers.append(marker)
+        
+        self.landmark_cov_pub.publish(marker_array)
     
             
     def publish_ekf_pose(self, timestamp):
