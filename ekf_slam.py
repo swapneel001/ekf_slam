@@ -183,10 +183,7 @@ class EkfSlam(Node):
 
         # Treat differently for rectangular vs cylindrical perception of landmarks based on number of corners
         if num_points < 8:
-            min_x = min(xs)
-            max_x = max(xs)
-            x_sym = 0.5 * (min_x + max_x)
-            shape = 'rect'
+            return #landmark is not fully visible/is too far to get a reliable measurement
         else:
             x_sym = sum(xs) / float(num_points)
             shape = 'cyl'
@@ -223,6 +220,7 @@ class EkfSlam(Node):
         if dt <= 0.0:
             self.measurement_update(landmark_id, d_m, theta_m, var_d, var_theta)
             self.publish_ekf_pose(self.system_time)
+            self.publish_landmarks(self.system_time)
             return
         
         if self.last_vel is not None:
@@ -468,6 +466,7 @@ class EkfSlam(Node):
             my = self.state[index + 1, 0]
             
             #publishing as tf
+            self.log.info(f'Publishing landmark {landmark_id} at ({mx:.2f}, {my:.2f})')
 
             t = TransformStamped()
             t.header.stamp = timestamp
@@ -487,6 +486,7 @@ class EkfSlam(Node):
         odom_msg.header.stamp = timestamp
         odom_msg.header.frame_id = "map"
         odom_msg.child_frame_id = "base_footprint"
+        #self.log.debug(f'Publishing EKF pose at time {self.seconds(timestamp):.2f}s: x={self.state[0,0]:.2f}, y={self.state[1,0]:.2f}, theta={self.state[2,0]:.2f}')
 
         odom_msg.pose.pose.position.x = float(self.state[0, 0])
         odom_msg.pose.pose.position.y = float(self.state[1, 0])
