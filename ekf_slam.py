@@ -536,19 +536,24 @@ class EkfSlam(Node):
         self.cam_yaw = self.q2yaw(rot)
         self.tf_timer.cancel()
 
-    def measurement_variance(self, d: float, theta: float):
+    def measurement_variance(self, d, theta):
         """
-        Piecewise variance model from Lab 5:
-        - base variances from CSV in "reliable region"
-        - inflated by factor 3 otherwise
-        Reliable region: 1 m <= d <= 10 m, |theta| <= 0.6 rad
+        Linear variance model for range, constant for bearing.
+        Based on empirical measurement error analysis.
         """
-        outside_reliable = (d < 1.0) or (d > 10.0) or (abs(theta) > 0.6)
-        factor = 3.0 if outside_reliable else 1.0
-        var_d = factor * self.var_d_base
-        var_theta = factor * self.var_theta_base
-        return var_d, var_theta
-
+        # Range variance: linear with distance (R² = 0.82)
+        var_d = 0.0026 * d - 0.006
+        var_d = max(var_d, 0.0001)  # floor for close range
+        
+        # Bearing variance: constant
+        var_theta = 0.0005
+        
+        # Inflate outside reliable region (1m <= d <= 10m, |θ| <= 0.6)
+        if d < 1.0 or d > 10.0 or abs(theta) > 0.6:
+            var_d *= 3.0
+            var_theta *= 3.0
+            
+    return var_d, var_theta
 
     def get_landmark_index(self,landmark_id):
         ''' Returns the index of the landmark in the state vector.
