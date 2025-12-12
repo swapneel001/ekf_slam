@@ -106,8 +106,8 @@ class EkfSlam(Node):
         self.var_theta_base = 0.000546
 
         # Process noise from odometry twist covariance (v, w)
-        self.M = np.array([[1.0e-05, 0.0],
-                           [0.0,      0.001]])
+        self.M = np.array([[0.01, 0.0],
+                           [0.0,      0.01]])
 
         #camera information
         self.camera_sub = self.create_subscription(
@@ -553,7 +553,7 @@ class EkfSlam(Node):
             var_d *= 3.0
             var_theta *= 3.0
             
-    return var_d, var_theta
+        return var_d, var_theta
 
     def get_landmark_index(self,landmark_id):
         ''' Returns the index of the landmark in the state vector.
