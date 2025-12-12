@@ -12,7 +12,8 @@ from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Quaternion
 from tf_transformations import quaternion_from_euler, euler_from_quaternion
 
-from tf2_ros import Buffer, TransformListener, TransformException
+from tf2_ros import Buffer, TransformListener, TransformException,TransformStamped
+from tf2_ros.transform_broadcaster import TransformBroadcaster
 
 heartbeat_period = 0.1
 
@@ -29,6 +30,18 @@ ID_TO_COLOR = {v: k for k, v in COLOR_TO_ID.items()}
 
 
 class EkfSlam(Node):
+
+    '''
+    EKF SLAM node for landmark-based SLAM using range-bearing measurements.
+    Subscribes to:
+    - /odom: Odometry messages for robot motion
+    - /vision_<color>/corners: Point2DArrayStamped messages for landmark observations
+    - /camera/camera_info: CameraInfo messages for camera intrinsics
+    
+    Publishes:
+    - /ekf_pose: Odometry messages for estimated robot pose
+    - /tf: Transforms for landmarks in the map frame
+    '''
 
     def __init__(self):
         super().__init__('ekf_slam')
@@ -107,43 +120,14 @@ class EkfSlam(Node):
 
         #publishers for robot pose - as ekf pose, and landmarks - as tf arrays
         self.odom_pub = self.create_publisher(Odometry, "/ekf_pose", 10)
+        self.landmark_pub = TransformBroadcaster(self)
 
 
-    def heartbeat(self):
-        self.log.info('heartbeat')
-
-    def q2yaw(self, quat):
-        """Convert quaternion to yaw angle"""
-        roll, pitch, yaw = euler_from_quaternion(
-            [quat.x, quat.y, quat.z, quat.w]
-        )
-        return yaw
-
-    def get_camera_transform(self):
-        """Get base_link -> camera_rgb_frame transform"""
-        if self.T_base_to_camera is not None:
-            return
-
-        try:
-            tf_msg = self.tf_buffer.lookup_transform(
-                'base_link',          # target frame
-                'camera_rgb_frame',   # source frame
-                rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=1.0)
-            )
-        except TransformException as ex:
-            self.log.warn(f'Could not get base_link -> camera_rgb_frame transform yet: {ex}')
-            return
-
-        self.T_base_to_camera = tf_msg
-        trans = tf_msg.transform.translation
-        rot = tf_msg.transform.rotation
-
-        self.cam_offset = np.array([trans.x, trans.y])
-        self.cam_yaw = self.q2yaw(rot)
-        self.tf_timer.cancel()
-
+    #CALLBACKS BELOW
     def camera_callback(self, msg):
+        '''
+        Callback for camera intrinsics
+        '''
         if self.fx is None:
             self.fx = msg.k[0]
             self.fy = msg.k[4]
@@ -151,11 +135,11 @@ class EkfSlam(Node):
             self.cy = msg.k[5]
             self.log.info(f'Camera intrinsics received: fx={self.fx}, fy={self.fy}, cx={self.cx}, cy={self.cy}')
 
-
-
-    #CALLBACKS BELOW
-
     def odom_callback(self, msg):
+        '''
+        Callback for odometry messages
+        Triggers EKF SLAM prediction step from odometry
+        '''
 
         v = msg.twist.twist.linear.x
         w = msg.twist.twist.angular.z
@@ -176,6 +160,11 @@ class EkfSlam(Node):
 
     def corner_callback(self, msg, color):
 
+        '''
+        Callback for landmark corner detections
+        Triggers EKF SLAM measurement update from landmark corner detections
+        Uses range and bearing derived from corner pixel locations
+        '''
         # Need camera intrinsics first
         if self.fx is None or self.fy is None or self.cx is None or self.cy is None:
             self.log.warn('No camera intrinsics yet, skipping measurement')
@@ -226,16 +215,10 @@ class EkfSlam(Node):
             return
 
         dt = self.seconds(timestamp) - self.seconds(self.system_time)
-        #self.log.info(f'dt value {dt}')
-        #self.log.info(
-        #    f"meas stamp: {self.seconds(timestamp):.3f}, "
-        #    f"system_time: {self.seconds(self.system_time):.3f}, dt={dt:.3f}"
-        #)
 
         if dt < -0.2:        
             # very late-arriving sample, discard
             #added tolerance for minor clock sync issues
-            #self.log.warn("Received measurement with negative dt (late); discarding.")
             return
         
         if dt <= 0.0:
@@ -250,6 +233,7 @@ class EkfSlam(Node):
         self.measurement_update(landmark_id, d_m, theta_m, var_d, var_theta)
         self.system_time = timestamp
         self.publish_ekf_pose(timestamp)
+        self.publish_landmarks(timestamp)
 
 
 
@@ -332,6 +316,8 @@ class EkfSlam(Node):
         """
         Updated method from EKF Localization to suit SLAM Problem
         EKF range-bearing update to a landmark given landmark ID
+        Carries out measurement update step of EKF SLAM, 
+        then computes Kalman Gain and carries out innovation step of state and covariance
         """
         # if we don't yet know the camera transform, we cannot fuse properly
         if self.T_base_to_camera is None:
@@ -413,6 +399,12 @@ class EkfSlam(Node):
 
     
     def prediction(self, v, w, dt):
+        
+        '''
+        EKF SLAM prediction step from odometry
+        Carries out prediction step of EKF SLAM using motion model
+        Updates robot pose and covariance accordingly
+        '''
         theta = self.state[2, 0]
 
         # small angular velocity → linear motion model
@@ -465,8 +457,85 @@ class EkfSlam(Node):
         self.Cov[3:, 0:3] = P_mr @ self.G.T
 
 
+    #LANDMARK AND POSE PUBLISHING 
+    def publish_landmarks(self,timestamp):
 
+        '''
+        Publishes the current EKF SLAM computed landmark positions as TF transforms.
+        '''
+        for landmark_id, info in self.landmark_registry.items():
+            index = info['index']
+            mx = self.state[index, 0]
+            my = self.state[index + 1, 0]
+            
+            #publishing as tf
+
+            t = TransformStamped()
+            t.header.stamp = timestamp
+            t.header.frame_id = "map"
+            t.child_frame_id = f"landmark_{ID_TO_COLOR[landmark_id]}"
+            t.transform.translation.x = float(mx)
+            t.transform.translation.y = float(my)
+            t.transform.translation.z = 0.0
+            t.transform.rotation = self.to_quaternion(0.0)
+            self.landmark_pub.sendTransform(t)
+    
+            
+    def publish_ekf_pose(self, timestamp):
+
+        '''Publishes the current EKF computed robot pose as an Odometry message.'''
+        odom_msg = Odometry()
+        odom_msg.header.stamp = timestamp
+        odom_msg.header.frame_id = "map"
+        odom_msg.child_frame_id = "base_footprint"
+
+        odom_msg.pose.pose.position.x = float(self.state[0, 0])
+        odom_msg.pose.pose.position.y = float(self.state[1, 0])
+        odom_msg.pose.pose.orientation = self.to_quaternion(float(self.state[2, 0]))
+
+        odom_msg.pose.covariance[0]  = float(self.Cov[0, 0])  # xx
+        odom_msg.pose.covariance[1]  = float(self.Cov[0, 1])  # xy
+        odom_msg.pose.covariance[5]  = float(self.Cov[0, 2])  # x-yaw
+        odom_msg.pose.covariance[6]  = float(self.Cov[1, 0])  # yx
+        odom_msg.pose.covariance[7]  = float(self.Cov[1, 1])  # yy
+        odom_msg.pose.covariance[11] = float(self.Cov[1, 2])  # y-yaw
+        odom_msg.pose.covariance[30] = float(self.Cov[2, 0])  # yaw-x
+        odom_msg.pose.covariance[31] = float(self.Cov[2, 1])  # yaw-y
+        odom_msg.pose.covariance[35] = float(self.Cov[2, 2])  # yaw-yaw
+
+        self.odom_pub.publish(odom_msg)
     #ALL HELPER FUNCTIONS BELOW
+
+    def q2yaw(self, quat):
+        """Convert quaternion to yaw angle"""
+        roll, pitch, yaw = euler_from_quaternion(
+            [quat.x, quat.y, quat.z, quat.w]
+        )
+        return yaw
+
+    def get_camera_transform(self):
+        """Get base_link -> camera_rgb_frame transform"""
+        if self.T_base_to_camera is not None:
+            return
+
+        try:
+            tf_msg = self.tf_buffer.lookup_transform(
+                'base_link',          # target frame
+                'camera_rgb_frame',   # source frame
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=1.0)
+            )
+        except TransformException as ex:
+            self.log.warn(f'Could not get base_link -> camera_rgb_frame transform yet: {ex}')
+            return
+
+        self.T_base_to_camera = tf_msg
+        trans = tf_msg.transform.translation
+        rot = tf_msg.transform.rotation
+
+        self.cam_offset = np.array([trans.x, trans.y])
+        self.cam_yaw = self.q2yaw(rot)
+        self.tf_timer.cancel()
 
     def measurement_variance(self, d: float, theta: float):
         """
@@ -490,30 +559,9 @@ class EkfSlam(Node):
             return self.landmark_registry[landmark_id]['index']
         else:
             return -1
-        
-    def publish_ekf_pose(self, timestamp):
-        odom_msg = Odometry()
-        odom_msg.header.stamp = timestamp
-        odom_msg.header.frame_id = "map"
-        odom_msg.child_frame_id = "base_footprint"
-
-        odom_msg.pose.pose.position.x = float(self.state[0, 0])
-        odom_msg.pose.pose.position.y = float(self.state[1, 0])
-        odom_msg.pose.pose.orientation = self.to_quaternion(float(self.state[2, 0]))
-
-        odom_msg.pose.covariance[0]  = float(self.Cov[0, 0])  # xx
-        odom_msg.pose.covariance[1]  = float(self.Cov[0, 1])  # xy
-        odom_msg.pose.covariance[5]  = float(self.Cov[0, 2])  # x-yaw
-        odom_msg.pose.covariance[6]  = float(self.Cov[1, 0])  # yx
-        odom_msg.pose.covariance[7]  = float(self.Cov[1, 1])  # yy
-        odom_msg.pose.covariance[11] = float(self.Cov[1, 2])  # y-yaw
-        odom_msg.pose.covariance[30] = float(self.Cov[2, 0])  # yaw-x
-        odom_msg.pose.covariance[31] = float(self.Cov[2, 1])  # yaw-y
-        odom_msg.pose.covariance[35] = float(self.Cov[2, 2])  # yaw-yaw
-
-        self.odom_pub.publish(odom_msg)
 
     def seconds(self, timestamp):
+        '''Convert ROS2 Time to float seconds.'''
         return timestamp.sec + timestamp.nanosec * 1e-9
     
     @staticmethod
