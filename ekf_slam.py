@@ -46,7 +46,6 @@ class EkfSlam(Node):
     def __init__(self):
         super().__init__('ekf_slam')
         self.log = self.get_logger()
-        self.timer = self.create_timer(heartbeat_period, self.heartbeat)
 
         self.state = np.zeros((3, 1))  # Robot pose: x, y, theta, initially
         self.Cov = np.eye(3) * 0.01  # Initial covariance matrix
