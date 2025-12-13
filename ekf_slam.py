@@ -49,10 +49,6 @@ class EkfSlam(Node):
         self.log = self.get_logger()
 
         self.state =  np.zeros((3,1))  # Robot pose: x, y, theta, initially
-        #robot launches at -1.5,0.0,0.0
-        self.state[0,0] = -1.5
-        self.state[1,0] = 0.0
-        self.state[2,0] = 0.0
         self.Cov = np.eye(3) * 0.01  # Initial covariance matrix
         self.I = np.eye(len(self.state)) #identity matrix for landmarks but dimensions are dynamic so we initialise later
         self.landmark_registry = {}  # landmark_id: landmark id and color 
