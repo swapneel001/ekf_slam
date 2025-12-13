@@ -48,7 +48,11 @@ class EkfSlam(Node):
         super().__init__('ekf_slam')
         self.log = self.get_logger()
 
-        self.state = np.zeros((3, 1))  # Robot pose: x, y, theta, initially
+        self.state =  np.zeros((3,1))  # Robot pose: x, y, theta, initially
+        #robot launches at -1.5,0.0,0.0
+        self.state[0,0] = -1.5
+        self.state[1,0] = 0.0
+        self.state[2,0] = 0.0
         self.Cov = np.eye(3) * 0.01  # Initial covariance matrix
         self.I = np.eye(len(self.state)) #identity matrix for landmarks but dimensions are dynamic so we initialise later
         self.landmark_registry = {}  # landmark_id: landmark id and color 
@@ -107,8 +111,8 @@ class EkfSlam(Node):
         self.var_theta_base = 0.000546
 
         # Process noise from odometry twist covariance (v, w)
-        self.M = np.array([[0.01, 0.0],
-                           [0.0,      0.01]])
+        self.M = np.array([[1.0e-05, 0.0],
+                           [0.0,      0.001]])
 
         #camera information
         self.camera_sub = self.create_subscription(
@@ -179,19 +183,26 @@ class EkfSlam(Node):
         xs = [p.x for p in points]
         ys = [p.y for p in points]
 
+        min_x = min(xs)
+        max_x = max(xs)
         min_y = min(ys)
         max_y = max(ys)
-        height_pix = max_y - min_y
+        dx = max_x - min_x
+        dy = max_y - min_y
+        height_pix = dy
 
-        # Treat differently for rectangular vs cylindrical perception of landmarks based on number of corners
-        if num_points < 8:
-            return #landmark is not fully visible/is too far to get a reliable measurement
-        else:
-            x_sym = sum(xs) / float(num_points)
-            shape = 'cyl'
+        epsilon = 1e-4
+        aspect_ratio = dy / (dx + epsilon)
 
+        cylindrical_ratio= self.landmark_height / 0.2
+
+        if aspect_ratio > cylindrical_ratio*1.5 or aspect_ratio<cylindrical_ratio*0.7:
+            self.log.debug('distorted landmark, reject')
+            return
         # Bearing in camera frame (we approximate as base frame bearing for this lab)
-        theta_m = math.atan((self.cx - x_sym) / self.fx)
+
+        x_sym = (min_x + max_x) / 2.0
+        theta_m = math.atan((self.cx- x_sym) / self.fx)
 
         cos_th = math.cos(theta_m)
 
@@ -205,6 +216,8 @@ class EkfSlam(Node):
         var_d, var_theta = self.measurement_variance(d_m, theta_m)
         landmark_id = COLOR_TO_ID[color]
         timestamp = msg.header.stamp
+        self.log.info(f'Landmark {color}: measured range={d_m:.2f}m, bearing={math.degrees(theta_m):.1f} deg, height_pix={height_pix:.1f}')
+
 
         if not self.initialized:
             self.initialized = True
@@ -470,7 +483,7 @@ class EkfSlam(Node):
             my = self.state[index + 1, 0]
             
             #publishing as tf
-            self.log.info(f'Publishing landmark {landmark_id} at ({mx:.2f}, {my:.2f})')
+            #self.log.info(f'Publishing landmark {landmark_id} at ({mx:.2f}, {my:.2f})')
 
             t = TransformStamped()
             t.header.stamp = timestamp
@@ -607,24 +620,21 @@ class EkfSlam(Node):
         self.cam_offset = np.array([trans.x, trans.y])
         self.cam_yaw = self.q2yaw(rot)
         self.tf_timer.cancel()
+        self.log.info('Obtained base_link -> camera_rgb_frame transform:')
+        self.log.info(f'Camera offset: ({self.cam_offset[0]:.3f}, {self.cam_offset[1]:.3f}), yaw: {self.cam_yaw:.3f} rad ({math.degrees(self.cam_yaw):.1f} deg)')
 
-    def measurement_variance(self, d, theta):
+
+    def measurement_variance(self, d: float, theta: float):
         """
-        Linear variance model for range, constant for bearing.
-        Based on empirical measurement error analysis.
+        Piecewise variance model from Lab 5:
+        - base variances from CSV in "reliable region"
+        - inflated by factor 3 otherwise
+        Reliable region: 1 m <= d <= 10 m, |theta| <= 0.6 rad
         """
-        # Range variance: linear with distance (R² = 0.82)
-        var_d = 0.0026 * d - 0.006
-        var_d = max(var_d, 0.0001)  # floor for close range
-        
-        # Bearing variance: constant
-        var_theta = 0.0005
-        
-        # Inflate outside reliable region (1m <= d <= 10m, |θ| <= 0.6)
-        if d < 1.0 or d > 10.0 or abs(theta) > 0.6:
-            var_d *= 3.0
-            var_theta *= 3.0
-            
+        outside_reliable = (d < 1.0) or (d > 10.0) or (abs(theta) > 0.6)
+        factor = 3.0 if outside_reliable else 1.0
+        var_d = factor * self.var_d_base
+        var_theta = factor * self.var_theta_base
         return var_d, var_theta
 
     def get_landmark_index(self,landmark_id):
