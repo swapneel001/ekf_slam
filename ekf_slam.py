@@ -286,9 +286,11 @@ class EkfSlam(Node):
         ])
 
         # Measurement noise
+
+        init_inflation = 10.0  # Inflate initial landmark uncertainty
         Q = np.array([
-            [var_range, 0],
-            [0, var_bearing]
+            [var_range*init_inflation, 0],
+            [0, var_bearing*init_inflation]
         ])
 
         # Current state dimension (before adding landmark)
