@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 import math
 
-from geometry_msgs.msg import PoseStamped, Quaternion
+from geometry_msgs.msg import PoseStamped, Quaternion, Point
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float64
 from gazebo_msgs.msg import LinkStates
@@ -10,6 +10,7 @@ from message_filters import Subscriber, ApproximateTimeSynchronizer
 
 from tf2_ros import Buffer, TransformListener, TransformException
 
+from visualization_msgs.msg import Marker, MarkerArray
 
 # Map landmark numbers to colors
 LANDMARK_NUM_TO_COLOR = {
@@ -78,6 +79,18 @@ class EkfSlamError(Node):
         # Timer to periodically check landmark errors
         self.landmark_timer = self.create_timer(0.1, self.landmark_error_callback)
 
+
+        #storing points for trajectory overlaying
+        self.gt_traj = []
+        self.ekf_traj = []
+
+        self.min_distance = 0.1
+        self.gt_last_point = None
+        self.ekf_last_point = None
+
+        self.ekf_traj_pub = self.create_publisher(Marker, '/ekf_slam/trajectory', 10)
+        self.gt_traj_pub = self.create_publisher(Marker, '/ground_truth/trajectory', 10)
+
         self.get_logger().info('ekf_slam_error running, waiting for Gazebo link states...')
 
     def link_states_callback(self, msg):
@@ -115,8 +128,69 @@ class EkfSlamError(Node):
         yaw_diff = wrap_to_pi(yaw_est - yaw_gt)
         yaw_err_abs = abs(yaw_diff)
 
+        if self.gt_last_point is None:
+            self.gt_last_point = (gx, gy)
+        if self.ekf_last_point is None:
+            self.ekf_last_point = (ex, ey)
+        
+        if math.hypot(gx - self.gt_last_point[0], gy - self.gt_last_point[1]) >= self.min_distance:
+            self.gt_traj.append((gx,gy))
+            self.gt_last_point = (gx, gy)
+        if math.hypot(ex - self.ekf_last_point[0], ey - self.ekf_last_point[1]) >= self.min_distance:
+            self.ekf_traj.append((ex,ey))
+            self.ekf_last_point = (ex, ey)
         self.pos_err_pub.publish(Float64(data=pos_err))
         self.yaw_err_pub.publish(Float64(data=yaw_err_abs))
+        self.traj_publish()
+
+    def traj_publish(self):
+        ekf_marker = Marker()
+        ekf_marker.header.frame_id = "map"
+        ekf_marker.header.stamp = self.get_clock().now().to_msg()
+        ekf_marker.ns = "ekf_trajectory"
+        ekf_marker.id = 0
+        ekf_marker.type = Marker.LINE_STRIP
+        ekf_marker.action = Marker.ADD
+        ekf_marker.scale.x = 0.02
+        ekf_marker.color.a = 1.0
+        ekf_marker.color.r = 1.0
+        ekf_marker.color.g = 0.0
+        ekf_marker.color.b = 0.0
+
+        for point in self.ekf_traj:
+            p = Point()
+            p.x = point[0]
+            p.y = point[1]
+            p.z = 0.0
+            ekf_marker.points.append(p)
+
+        self.ekf_traj_pub.publish(ekf_marker)
+
+        gt_marker = Marker()
+        gt_marker.header.frame_id = "map"
+        gt_marker.header.stamp = self.get_clock().now().to_msg()
+        gt_marker.ns = "gt_trajectory"
+        gt_marker.id = 1
+        gt_marker.type = Marker.LINE_STRIP
+        gt_marker.action = Marker.ADD
+        gt_marker.scale.x = 0.02
+        gt_marker.color.a = 1.0
+        gt_marker.color.r = 0.0
+        gt_marker.color.g = 1.0
+        gt_marker.color.b = 0.0
+
+        for point in self.gt_traj:
+            p = Point()
+            p.x = point[0]
+            p.y = point[1]
+            p.z = 0.0
+            gt_marker.points.append(p)
+
+        self.gt_traj_pub.publish(gt_marker)
+        self.ekf_traj_pub.publish(ekf_marker)
+
+
+
 
     def landmark_error_callback(self):
         """Compute and publish landmark position errors by looking up TF transforms"""

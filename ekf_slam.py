@@ -28,6 +28,8 @@ COLOR_TO_ID = {
 
 ID_TO_COLOR = {v: k for k, v in COLOR_TO_ID.items()}
 
+path = 'src/prob_rob_labs_ros_2/prob_rob_labs/config/ekf_map.json'
+
 
 
 class EkfSlam(Node):
@@ -122,6 +124,10 @@ class EkfSlam(Node):
         self.odom_pub = self.create_publisher(Odometry, "/ekf_slam_pose", 10)
         self.landmark_pub = TransformBroadcaster(self)
         self.landmark_cov_pub = self.create_publisher(MarkerArray, "/ekf_slam_landmark_covariances", 10)
+
+
+        #saving the map
+        self.map_save_path = path
 
 
     #CALLBACKS BELOW
@@ -469,7 +475,7 @@ class EkfSlam(Node):
         self.Cov[3:, 0:3] = P_mr @ self.G.T
 
 
-    #LANDMARK AND POSE PUBLISHING 
+    #LANDMARK AND POSE PUBLISHING, and MAP SAVING
     def publish_landmarks(self,timestamp):
 
         '''
@@ -586,7 +592,36 @@ class EkfSlam(Node):
         odom_msg.pose.covariance[35] = float(self.Cov[2, 2])  # yaw-yaw
 
         self.odom_pub.publish(odom_msg)
+
+
+    def save_map(self):
+        """Saves the current landmark map to a JSON file."""
+        map_data = []
+        for landmark_id, info in self.landmark_registry.items():
+            index = info['index']
+            mx = self.state[index, 0]
+            my = self.state[index + 1, 0]
+            landmark_entry = {
+                'id': landmark_id,
+                'color': ID_TO_COLOR[landmark_id],
+                'position': {
+                    'x': float(mx),
+                    'y': float(my)
+                }
+            }
+            map_data.append(landmark_entry)
+
+        with open(self.map_save_path, 'w') as f:
+            json.dump(map_data, f, indent=4)
+        
+        self.log.info(f'Saved EKF SLAM map with {len(map_data)} landmarks to {self.map_save_path}')
     #ALL HELPER FUNCTIONS BELOW
+
+    def destroy_node(self):
+        """Override destroy_node to save map on shutdown."""
+        self.log.info('Shutting down EKF SLAM node, saving map...')
+        self.save_map()
+        super().destroy_node()
 
     def q2yaw(self, quat):
         """Convert quaternion to yaw angle"""
@@ -675,9 +710,13 @@ class EkfSlam(Node):
 def main():
     rclpy.init()
     ekf_slam = EkfSlam()
-    ekf_slam.spin()
-    ekf_slam.destroy_node()
-    rclpy.shutdown()
+    try:
+        ekf_slam.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ekf_slam.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
