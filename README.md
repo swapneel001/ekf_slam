@@ -6,7 +6,7 @@ An implementation of the Extended Kalman Filter (EKF) SLAM algorithm based on Th
 
 This ROS 2 node implements the EKF SLAM algorithm for a TurtleBot3 robot navigating in a simulated environment with 5 colored cylindrical landmarks. The robot uses range-bearing measurements derived from corner detection to simultaneously build a map of landmark positions while localizing itself.
 
-![EKF SLAM Demo](EKFSLAM1.gif)
+![EKF SLAM Demo](Assets/EKFSLAM1.gif)
 
 ## Algorithm
 
