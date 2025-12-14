@@ -33,13 +33,8 @@ Where:
 2. **Measurement Update**: Correct state estimate using range-bearing observations
 3. **Landmark Initialization**: Add new landmarks to state vector on first observation
 
-## Demo Videos
-
-### SLAM in World Config 1
-<video src="EKFSlam1- 2.5x.mov" width="640" controls></video>
-
-### Slam in World Config 2 along with robot position error
-<video src="EKFSlam3-ErrorPlot2.5x.mp4" width="640" controls></video>
+## Demo Videos 
+[To be added]
 
 ## Installation
 
