@@ -34,7 +34,18 @@ Where:
 3. **Landmark Initialization**: Add new landmarks to state vector on first observation
 
 ## Demo Videos 
-[To be added]
+
+### EKF Slam in World Configuration 1 
+[<img src="https://img.youtube.com/vi/k7Gz0vrzSmE/hqdefault.jpg" width="600" height="300"
+/>](https://www.youtube.com/embed/k7Gz0vrzSmE)
+
+### EKF Slam in World Configuration 2
+[<img src="https://img.youtube.com/vi/SzE4AFgWFig/hqdefault.jpg" width="600" height="300"
+/>](https://www.youtube.com/embed/SzE4AFgWFig)
+
+### EKF Slam in World Configuration 2 with Robot Error Plot
+[<img src="https://img.youtube.com/vi/bVRGi56nFlA/hqdefault.jpg" width="600" height="300"
+/>](https://www.youtube.com/embed/bVRGi56nFlA)
 
 ## Installation
 
