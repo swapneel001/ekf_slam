@@ -33,6 +33,10 @@ Where:
 2. **Measurement Update**: Correct state estimate using range-bearing observations
 3. **Landmark Initialization**: Add new landmarks to state vector on first observation
 
+
+## EKF Slam with EKF and Ground Truth Trajectories overlaid 
+![Trajectory Overlay](Assets/traj_overlay.png)
+
 ## Demo Videos 
 
 ### EKF Slam in World Configuration 1 
